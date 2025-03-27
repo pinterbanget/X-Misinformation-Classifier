@@ -24,7 +24,7 @@ from datetime import datetime
 
 test_size = 0.25 # 0.3 is default, 0.25 (75:10:15)
 class_1_weights = 1.5 # giving more weight towards class 1
-dataset_name = "dt20250314" # dt20250312 or dt20250314
+dataset_name = "filtered_data.pkl"
 model_name = f"single_tower_bertweet_lstm_{dataset_name}_100char_test_size_{test_size}_clweight_{class_1_weights}"
 timestamp = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 timestamp_day = f'{datetime.now().strftime("%Y%m%d")}'
@@ -162,22 +162,12 @@ if __name__ == '__main__':
     USE_NOTE_PROB_TEST = 0.0  # 0% of test samples will use notes (tweet only)
     
     # Process data
-    if dataset_name == 'dt20250312':
-        with open("clean_data/20250312.pkl", "rb") as f:
-            dt_dict = pickle.load(f)
-            X_tweet_preprocessed = dt_dict['X']  
-            X_notes_preprocessed = dt_dict['X_notes'] 
-            y_processed = dt_dict['y'] 
-    elif dataset_name == 'dt20250314': 
-        with open("clean_data/20250314_100char.pkl", "rb") as f:
-            dt_dict = pickle.load(f)
-            X_tweet_preprocessed = dt_dict['X']  
-            X_notes_preprocessed = dt_dict['X_notes'] 
-            y_processed = dt_dict['y']
-    else:
-        logger.info(f"No matching dataset. stopping..")
-        exit() 
-    
+    with open(dataset_name, "rb") as f:
+        dt_dict = pickle.load(f)
+        X_tweet_preprocessed = dt_dict['X']  
+        X_notes_preprocessed = dt_dict['X_notes'] 
+        y_processed = dt_dict['y'] 
+        
     # Initialize components
     tokenizer = AutoTokenizer.from_pretrained('models/bertweet-base', normalization=True)
     model = BertweetLSTMClassifier(num_classes=len(np.unique(y_processed)))

@@ -21,7 +21,7 @@ from torch.utils.data.distributed import DistributedSampler
 import logging
 from datetime import datetime
 
-test_size = 0.3 # 0.3 is default
+dataset_name = "filtered_data.pkl"
 
 # Initialize logging
 os.makedirs('logs/single_tower_bart_lstm', exist_ok=True)
@@ -30,7 +30,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f'logs/single_tower_bart_lstm/combined_bart_lstm_dt20250312_tsize_{test_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+        logging.FileHandler(f'logs/single_tower_bart_lstm/combined_bart_lstm_dt20250312_tsize_{0.15}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
         logging.StreamHandler()
     ]
 )
@@ -109,21 +109,17 @@ class BARTLSTMClassifier(torch.nn.Module):
         # Single LSTM layer
         self.lstm = torch.nn.LSTM(
             input_size=768,
-            hidden_size=128,
+            hidden_size=64,
             num_layers=2,
             bidirectional=True,
             dropout=0.1,
             batch_first=True
         )
         
-        # Simple classifier
-        self.classifier = torch.nn.Sequential(
-            torch.nn.Linear(256, 128),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(0.3),
-            torch.nn.LayerNorm(128),
-            torch.nn.Linear(128, num_classes)
-        )
+        # Adjusted classifier input size (128)
+        self.classifier = torch.nn.Linear(128, num_classes)
+        self.dropout = torch.nn.Dropout(0.3)
+        self.layer_norm = torch.nn.LayerNorm(128)  # Match classifier input
         
     def forward(self, input_ids, attention_mask):
         # Ensure inputs are on the same device as the model
@@ -142,6 +138,8 @@ class BARTLSTMClassifier(torch.nn.Module):
         # Process through LSTM
         lstm_out, _ = self.lstm(sequence)
         pooled = torch.mean(lstm_out, dim=1)
+        pooled = self.layer_norm(pooled)
+        pooled = self.dropout(pooled)
         
         # Classify
         return self.classifier(pooled)
@@ -159,7 +157,7 @@ if __name__ == '__main__':
     TEMPERATURE = 2.0  # Softmax temperature for knowledge distillation
     
     # Process data
-    with open("clean_data/20250314_100char.pkl", "rb") as f:
+    with open(dataset_name, "rb") as f:
         dt_dict = pickle.load(f)
         X_tweet_preprocessed = dt_dict['X']
         X_notes_preprocessed = dt_dict['X_notes']
@@ -167,18 +165,19 @@ if __name__ == '__main__':
     
     # Initialize components
     tokenizer = AutoTokenizer.from_pretrained('facebook/bart-base',)
+    teacher_model = BARTLSTMClassifier(num_classes=len(np.unique(y_processed)))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # First split data to isolate test set completely (90-10)
+    # First split data to isolate test set completely (75-25)
     X_tweet_temp, X_tweet_test, X_notes_temp, X_notes_test, y_temp, y_test = train_test_split(
         X_tweet_preprocessed, X_notes_preprocessed, y_processed,
-        test_size=0.15, random_state=42
+        test_size=0.25, random_state=42
     )
     
-    # Split remaining data into train-val (78-22 split of the 90% ≈ 70-20 of total)
+    # Split remaining data into train-val (60% split of the 25% ≈ 10-15 of total)
     X_tweet_train, X_tweet_val, X_notes_train, X_notes_val, y_train, y_val = train_test_split(
         X_tweet_temp, X_notes_temp, y_temp,
-        test_size=0.118, random_state=42
+        test_size=0.60, random_state=42
     )
     
     # Create training dataset for teacher (with community notes)
@@ -195,14 +194,95 @@ if __name__ == '__main__':
     teacher_train_loader = DataLoader(teacher_train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     teacher_val_loader = DataLoader(teacher_val_dataset, batch_size=BATCH_SIZE)
     
-    # Load the best teacher model
-    best_teacher_path = 'models/best_model/teacher_model_dt20250312_tsize_0.3_20250316.pth'  # adjust path as needed
-    logger.info(f"Loading teacher model from {best_teacher_path}")
+    # Training setup for teacher
+    teacher_optimizer = torch.optim.AdamW(teacher_model.parameters(), lr=LEARNING_RATE)
+    class_weights = compute_class_weight('balanced', classes=np.unique(y_processed), y=y_processed)
+    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    ce_loss = torch.nn.CrossEntropyLoss(weight=class_weights)
+    kd_loss = torch.nn.KLDivLoss(reduction='batchmean')
+    scaler = GradScaler('cuda')
+
+    # Train teacher model
+    logger.info("Training teacher model...")
+    best_teacher_f1 = 0
+    patience = 5
+    patience_counter = 0
     
-    teacher_model = BARTLSTMClassifier(num_classes=2)
-    if torch.cuda.device_count() > 1:
-        teacher_model = DataParallel(teacher_model)
-    teacher_model = teacher_model.to(device)
+    for epoch in range(TEACHER_EPOCHS):
+        teacher_model.train()
+        total_loss = 0
+        
+        for batch in tqdm(teacher_train_loader, desc=f"Epoch {epoch+1}/{TEACHER_EPOCHS}"):
+            teacher_optimizer.zero_grad()
+            
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['label'].to(device)
+            
+            with autocast('cuda'):
+                outputs = teacher_model(input_ids, attention_mask)
+                loss = ce_loss(outputs, labels)
+            
+            scaler.scale(loss).backward()
+            scaler.step(teacher_optimizer)
+            scaler.update()
+            
+            total_loss += loss.item()
+        
+        avg_teacher_loss = total_loss / len(teacher_train_loader)
+        logger.info(f"Average teacher loss: {avg_teacher_loss:.4f}")
+        
+        # Validation phase
+        teacher_model.eval()
+        val_loss = 0
+        all_preds, all_labels = [], []
+        
+        with torch.no_grad():
+            for batch in tqdm(teacher_val_loader, desc="Validation"):
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                labels = batch['label'].to(device)
+                
+                with autocast('cuda'):
+                    outputs = teacher_model(input_ids, attention_mask)
+                    loss = ce_loss(outputs, labels)
+                
+                val_loss += loss.item()
+                
+                preds = torch.argmax(outputs, dim=1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+        
+        # Calculate metrics
+        val_accuracy = accuracy_score(all_labels, all_preds)
+        val_f1 = f1_score(all_labels, all_preds, average='weighted')
+        avg_val_loss = val_loss / len(teacher_val_loader)
+        
+        logger.info(f"Validation metrics:")
+        logger.info(f"Validation Loss: {avg_val_loss:.4f}")
+        logger.info(f"Validation Accuracy: {val_accuracy:.4f}")
+        logger.info(f"Validation F1 Score: {val_f1:.4f}")
+        logger.info("\n" + classification_report(all_labels, all_preds, digits=4, target_names=['Reliable', 'Misinformed']))
+        
+        # Check for improvement
+        if val_f1 > best_teacher_f1:
+            best_teacher_f1 = val_f1
+            patience_counter = 0
+            # Save the best model
+            best_teacher_path = f'models/best_model/teacher_model_dt20250312_tsize_{test_size}_{datetime.now().strftime("%Y%m%d")}.pth'
+            if isinstance(teacher_model, DataParallel):
+                torch.save(teacher_model.module.state_dict(), best_teacher_path)
+            else:
+                torch.save(teacher_model.state_dict(), best_teacher_path)
+            logger.info(f"New best teacher model saved with F1 score: {val_f1:.4f}")
+        else:
+            patience_counter += 1
+            logger.info(f"No improvement for {patience_counter}/{patience} epochs.")
+            if patience_counter >= patience:
+                logger.info("Early stopping triggered!")
+                break
+    
+    # Load best teacher model for knowledge distillation
     teacher_model.load_state_dict(torch.load(best_teacher_path))
     teacher_model.eval()
     
