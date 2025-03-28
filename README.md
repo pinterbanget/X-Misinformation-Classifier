@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project aims to develop a system that can identify and flag misleading posts on X (formerly Twitter) using publicly-available <a href="https://x.com/i/communitynotes/download-data"Community Notes</a> data before they gain significant traction. The system will use a combination of machine learning and deep learning techniques to detect and flag misleading content.
+This project aims to develop a system that can identify and flag misleading posts on X (formerly Twitter) using publicly-available <a href="https://x.com/i/communitynotes/download-data">Community Notes</a> data before they gain significant traction. The system will use a combination of machine learning and deep learning techniques to detect and flag misleading content.
 
 ## Novelty
 
@@ -15,17 +15,17 @@ Our novelty lies in two aspects:
 
 ### Data Collection
 
-- <b>Community Notes Data<b>: We use the Community Notes data directly from <a href="https://x.com/i/communitynotes/download-data">X</a> to retrieve every single Community Note ever created. We also utilise the Notes rating data to filter out low-quality notes and notes related to media content.
-- <b>X Post Data<b>: We use a combination of X API, web scraping, and manual addition to retrieve the posts that appear in the Community Notes data. During data collection, an ensemble of language models are used to filter out the posts that are not in English.
+- <b>Community Notes Data</b>: We use the Community Notes data directly from <a href="https://x.com/i/communitynotes/download-data">X</a> to retrieve every single Community Note ever created. We also utilise the Notes rating data to filter out low-quality notes and notes related to media content.
+- <b>X Post Data</b>: We use a combination of X API, web scraping, and manual addition to retrieve the posts that appear in the Community Notes data. During data collection, an ensemble of language models are used to filter out the posts that are not in English.
 
 ### Data Preprocessing
 
-- <b>Length Filtering<b>: We filter out posts that are too short (less than 100 characters).
-- <b>Lemmatising<b>: We lemmatise the text using the <a href="https://www.nltk.org/">nltk</a> library.
-- <b>Lowercasing<b>: We convert all text to lowercase.
-- <b>Punctuation Removal<b>: We remove punctuation and special characters using regular expressions.
-- <b>Stopword Removal<b>: We remove stopwords using the <a href="https://www.nltk.org/">nltk</a> library.
-- <b>Tokenisation<b>: We tokenise the text using the <a href="https://www.nltk.org/">nltk</a> library.
+- <b>Length Filtering</b>: We filter out posts that are too short (less than 100 characters).
+- <b>Lemmatising</b>: We lemmatise the text using the <a href="https://www.nltk.org/">nltk</a> library.
+- <b>Lowercasing</b>: We convert all text to lowercase.
+- <b>Punctuation Removal</b>: We remove punctuation and special characters using regular expressions.
+- <b>Stopword Removal</b>: We remove stopwords using the <a href="https://www.nltk.org/">nltk</a> library.
+- <b>Tokenisation</b>: We tokenise the text using the <a href="https://www.nltk.org/">nltk</a> library.
 
 ### Model Design
 
@@ -35,8 +35,8 @@ For models that only use post data:
 - <b>Deep Learning Models</b>: We use BART and BERTweet embedding layers, in conjunction with a bidirectional LSTM layer, to create a deep learning model.
 
 For models that use both post and note data:
-- <b>Single-tower Neural Network<b>: We build a single-tower neural network model. The input is the concatenation of the post and note embeddings. The output is a final score. Knowledge distillation is also explored.
-- <b>Two-tower Neural Network<b>: We build a two-tower neural network model inspired by recommendation systems. The two towers are the Post tower and the Note tower. The Post tower is used to encode the post text, while the Note tower is used to encode the note text. The two towers' outputs are then handled with a fusion layer to produce a final score.
+- <b>Single-tower Neural Network</b>: We build a single-tower neural network model. The input is the concatenation of the post and note embeddings. The output is a final score. Knowledge distillation is also explored.
+- <b>Two-tower Neural Network</b>: We build a two-tower neural network model inspired by recommendation systems. The two towers are the Post tower and the Note tower. The Post tower is used to encode the post text, while the Note tower is used to encode the note text. The two towers' outputs are then handled with a fusion layer to produce a final score.
 
 We focus on Class 1 (Misleading) Recall as the most important metric, as we want to flag as many misleading posts as possible.
 
