@@ -1,1 +1,7 @@
+<<<<<<< HEAD
 catboost_info
+=======
+*.txt
+.DS_Store
+submission
+>>>>>>> b6bb8b9 (add submission to exclude)
